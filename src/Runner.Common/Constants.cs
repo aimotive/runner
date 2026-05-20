@@ -302,7 +302,9 @@ namespace GitHub.Runner.Common
 
             public static class Agent
             {
+                public static readonly string ActionsDirectory = "ACTIONS_RUNNER_ACTIONS_DIRECTORY";
                 public static readonly string ToolsDirectory = "agent.ToolsDirectory";
+                public static readonly string TempDirectory = "ACTIONS_RUNNER_TEMP_DIRECTORY";
 
                 // Set this env var to "nodeXY" to downgrade the node version for internal functions (e.g hashfiles). This does NOT affect the version of node actions.
                 public static readonly string ForcedInternalNodeVersion = "ACTIONS_RUNNER_FORCED_INTERNAL_NODE_VERSION";
