@@ -1,0 +1,35 @@
+# Local runnerset image — for self-hosted / auto-registering use (myoung34 style).
+# Built FROM myoung34/github-runner-base:latest and seeded with the locally built
+# custom runner package (custom glibc-2.27 node20/node24 already in its externals).
+#
+# The registration entrypoints are lifted from the full myoung34/github-runner
+# image, so this stays a thin overlay on the -base image while keeping the
+# familiar token.sh / app_token.sh / entrypoint.sh behaviour.
+#
+# Build context must contain actions-runner.tar.gz (see build/build-runner-package.sh):
+#   docker build -f images/Dockerfile.local -t <tag> build/.artifacts
+FROM myoung34/github-runner:latest AS entrypoints
+
+FROM myoung34/github-runner-base:latest
+LABEL org.opencontainers.image.description="Custom GitHub Actions runner (glibc-2.27 node20/node24) on myoung34 base"
+
+ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
+RUN mkdir -p /opt/hostedtoolcache
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+WORKDIR /actions-runner
+COPY actions-runner.tar.gz /tmp/actions-runner.tar.gz
+
+RUN tar -zxf /tmp/actions-runner.tar.gz -C /actions-runner \
+  && rm /tmp/actions-runner.tar.gz \
+  && ./bin/installdependencies.sh \
+  && mkdir -p /_work \
+  && chown -R runner /_work /actions-runner /opt/hostedtoolcache
+
+# Registration / startup scripts from the full myoung34 image.
+COPY --from=entrypoints /entrypoint.sh /token.sh /app_token.sh /
+RUN chmod +x /token.sh /entrypoint.sh /app_token.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["./bin/Runner.Listener", "run", "--startuptype", "service"]
