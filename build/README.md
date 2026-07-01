@@ -24,8 +24,17 @@ binaries come from the [`node20-ubuntu1804`](../../node20-ubuntu1804) repo.
 | Step | Script | Output |
 | --- | --- | --- |
 | 1. node | `build/build-node-binaries.sh` | `build/.artifacts/node/node20.tar.gz`, `node24.tar.gz` |
-| 2. package | `build/build-runner-package.sh` | `build/.artifacts/actions-runner.tar.gz` (node baked into externals) |
-| 3. images | `images/Dockerfile.custom`, `images/Dockerfile.local` | two runner images |
+| 2. hooks | `build/build-hooks.sh` | `build/.artifacts/hooks/k8s-novolume/index.js` (custom fork) |
+| 3. package | `build/build-runner-package.sh` | `build/.artifacts/actions-runner.tar.gz` (node baked into externals) |
+| 4. images | `images/Dockerfile.custom`, `images/Dockerfile.local` | two runner images |
+
+The **native** image (`Dockerfile.custom`) bakes in our
+[`runner-container-hooks`](../../runner-container-hooks) fork as the
+`k8s-novolume` hook (`/home/runner/k8s-novolume/index.js`) — this carries the
+custom Kubernetes-mode features (work-volume PV reuse, node pinning, job
+resource/usage reporting, reliable output copy-back). Point the runner at it
+with `ACTIONS_RUNNER_CONTAINER_HOOKS=/home/runner/k8s-novolume/index.js`. The
+stock upstream volume-based hook is still available at `/home/runner/k8s`.
 
 The Node versions are read automatically from `src/Misc/externals.sh`
 (`NODE20_VERSION` / `NODE24_VERSION`) so they always match what this runner
@@ -34,14 +43,15 @@ expects.
 ## Usage
 
 ```bash
-# Everything: node -> package -> both images
+# Everything: node -> hooks -> package -> both images
 ./build-runner-image.sh
 
 # Individual steps
 ./build-runner-image.sh node       # build the custom node tarballs
+./build-runner-image.sh hooks      # build the custom k8s-novolume hook
 ./build-runner-image.sh package    # build the runner package (needs step 1)
-./build-runner-image.sh native     # build images/Dockerfile.custom  (needs step 2)
-./build-runner-image.sh local      # build images/Dockerfile.local   (needs step 2)
+./build-runner-image.sh native     # build images/Dockerfile.custom  (needs steps 2+3)
+./build-runner-image.sh local      # build images/Dockerfile.local   (needs step 3)
 ./build-runner-image.sh images     # build both images
 ```
 
@@ -56,11 +66,18 @@ NODE24_TARBALL=~/Downloads/node-v24.16.0-linux-x64.tar.gz \
 ./build-runner-image.sh
 ```
 
+Likewise a prebuilt hook bundle can be reused instead of rebuilding the fork:
+
+```bash
+HOOKS_INDEX_JS=../runner-container-hooks/packages/k8s/dist/index.js \
+./build-runner-image.sh
+```
+
 ## The two images
 
 | Image | Dockerfile | Base | Use |
 | --- | --- | --- | --- |
-| `gha-runner-native:custom` | `images/Dockerfile.custom` | `dotnet/runtime-deps:8.0-noble` | Same shape as GitHub's `images/Dockerfile` (container hooks + docker/buildx), but with the custom runner + node. For ARC / native runner deployments. |
+| `gha-runner-native:custom` | `images/Dockerfile.custom` | `dotnet/runtime-deps:8.0-noble` | Same shape as GitHub's `images/Dockerfile` (docker/buildx + stock `k8s` hook + **custom `k8s-novolume` hook**), with the custom runner + node. For the Kubernetes self-hosted / ARC deployment. |
 | `gha-runner-local:custom` | `images/Dockerfile.local` | `myoung34/github-runner-base:latest` | Auto-registering self-hosted runner. Entrypoints lifted from `myoung34/github-runner`. |
 
 Override tags with `IMAGE_NATIVE_TAG` / `IMAGE_LOCAL_TAG`.
@@ -70,5 +87,8 @@ Override tags with `IMAGE_NATIVE_TAG` / `IMAGE_LOCAL_TAG`.
 - Docker (with buildx for multi-arch; `linux/amd64` by default).
 - For the source node build: the `node20-ubuntu1804` repo at `../node20-ubuntu1804`
   (override with `NODE_REPO`).
+- For the custom hook build: the `runner-container-hooks` fork at
+  `../runner-container-hooks` (override with `HOOKS_REPO`).
 - Network access (the package step downloads the .NET SDK and NuGet packages;
-  the native image downloads container-hooks + docker + buildx).
+  the hooks step runs `npm ci`; the native image downloads docker + buildx and
+  the stock k8s hook).
