@@ -18,6 +18,12 @@ BUILDER_IMAGE="${BUILDER_IMAGE:-mcr.microsoft.com/dotnet/sdk:8.0}"
 [ -f "${NODE_DIST_DIR}/node20.tar.gz" ] || die "missing ${NODE_DIST_DIR}/node20.tar.gz — run build-node-binaries.sh first"
 [ -f "${NODE_DIST_DIR}/node24.tar.gz" ] || die "missing ${NODE_DIST_DIR}/node24.tar.gz — run build-node-binaries.sh first"
 
+# The runner build stamps its commit hash via `git rev-parse HEAD`. When runner/
+# is a git submodule its .git is just a pointer to the superrepo, which is not
+# mounted into the build container — so capture the real sha here and inject it,
+# rather than vendoring the .git dir.
+RUNNER_SHA="${RUNNER_SHA:-$(git -C "${RUNNER_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)}"
+
 mkdir -p "${ARTIFACTS_DIR}"
 rm -f "${RUNNER_PACKAGE}"
 
@@ -30,6 +36,7 @@ docker run --rm \
   -e HOME=/tmp/runner-home \
   -e DOTNET_CLI_HOME=/tmp/runner-home \
   -e NUGET_PACKAGES=/tmp/runner-home/.nuget \
+  -e RUNNER_SHA="${RUNNER_SHA}" \
   -v "${RUNNER_ROOT}:/runner-src:ro" \
   -v "${NODE_DIST_DIR}:/node-dist:ro" \
   -v "${ARTIFACTS_DIR}:/runner-out" \
@@ -40,6 +47,13 @@ docker run --rm \
     cp -a /runner-src/. /tmp/runner-src
     rm -rf /tmp/runner-src/_dotnetsdk /tmp/runner-src/_layout /tmp/runner-src/_package /tmp/runner-src/_downloads
     cd /tmp/runner-src/src
+
+    # dir.proj shells out to git for the build stamp, but there is no usable .git
+    # in the container. Inject the real commit hash and drop the git commands.
+    sed -i \
+      -e "s#git rev-parse HEAD#echo ${RUNNER_SHA}#" \
+      -e "s#git update-index --assume-unchanged ./Runner.Sdk/BuildConstants.cs#true#" \
+      dir.proj
 
     ./dev.sh layout "${BUILD_CONFIG}" "${RUNTIME_ID}"
 
