@@ -21,6 +21,15 @@ BUILDER_IMAGE="${BUILDER_IMAGE:-mcr.microsoft.com/dotnet/sdk:8.0}"
 mkdir -p "${ARTIFACTS_DIR}"
 rm -f "${RUNNER_PACKAGE}"
 
+# src/dir.proj shells out to `git rev-parse HEAD` (and `git update-index`) to
+# stamp BuildConstants.cs during the build. When RUNNER_ROOT is a submodule,
+# its .git is just a gitlink file (`gitdir: ../.git/modules/runner`) — a path
+# relative to RUNNER_ROOT's own location in the superrepo, which only resolves
+# there. Once copied into the container it dangles, so `git rev-parse` fails
+# with "not a git repository". Resolve the real git dir on the host and mount
+# it too, so we can splice in a working .git after the copy.
+GIT_DIR="$(git -C "${RUNNER_ROOT}" rev-parse --absolute-git-dir)"
+
 log "Building custom runner package (${BUILD_CONFIG}/${RUNTIME_ID}) with custom node baked in"
 docker run --rm \
   --platform "${DOCKER_PLATFORM}" \
@@ -31,6 +40,7 @@ docker run --rm \
   -e DOTNET_CLI_HOME=/tmp/runner-home \
   -e NUGET_PACKAGES=/tmp/runner-home/.nuget \
   -v "${RUNNER_ROOT}:/runner-src:ro" \
+  -v "${GIT_DIR}:/runner-src-git:ro" \
   -v "${NODE_DIST_DIR}:/node-dist:ro" \
   -v "${ARTIFACTS_DIR}:/runner-out" \
   "${BUILDER_IMAGE}" \
@@ -39,6 +49,18 @@ docker run --rm \
     mkdir -p /tmp/runner-home
     cp -a /runner-src/. /tmp/runner-src
     rm -rf /tmp/runner-src/_dotnetsdk /tmp/runner-src/_layout /tmp/runner-src/_package /tmp/runner-src/_downloads
+
+    # Replace the dangling gitlink with a real, self-contained .git copied
+    # from the host, and repoint core.worktree (also relative, e.g.
+    # "../../../runner") at the copy'"'"'s actual location so `git
+    # update-index` recognises it as being inside the work tree. Rewritten
+    # with `config --file` (not `--git-dir ... config`), since the latter
+    # still goes through repo setup first and tries to chdir into the OLD
+    # (now-dangling) relative worktree path before applying the new one.
+    rm -f /tmp/runner-src/.git
+    cp -a /runner-src-git /tmp/runner-src/.git
+    git config --file /tmp/runner-src/.git/config core.worktree /tmp/runner-src
+
     cd /tmp/runner-src/src
 
     ./dev.sh layout "${BUILD_CONFIG}" "${RUNTIME_ID}"
