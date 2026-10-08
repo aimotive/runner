@@ -7,18 +7,18 @@
 # resources/usage reporting, reliable output copy-back, ...).
 #
 # Output: ${ARTIFACTS_DIR}/hooks/k8s-novolume/index.js
-#         ${ARTIFACTS_DIR}/hooks/k8s-novolume/index.js.source  (what it was built from)
 #
 # Sources, in priority order:
 #   1. HOOKS_INDEX_JS env var pointing at a prebuilt bundle.
 #   2. Build from source via HOOKS_REPO (default ../runner-container-hooks).
 #
-# A previously built bundle is reused only when it was built from the exact
+# The bundle's last line records what it was built from:
+#   // k8s-novolume hook source: <hooks commit>
+# A previously built bundle is reused only when that line names the exact
 # commit HOOKS_REPO is on now, with a clean working tree. Any other case —
-# new commit, uncommitted changes, a prebuilt bundle from an earlier run, a
-# bundle without a source stamp — rebuilds it. FORCE_HOOKS_BUILD=1 always
-# rebuilds. The source is also appended to the bundle as a trailing comment,
-# so an image can be checked with:
+# new commit, uncommitted changes, a prebuilt bundle, a bundle without the
+# line — rebuilds it. FORCE_HOOKS_BUILD=1 always rebuilds. The same line lets
+# an image be checked with:
 #   docker run --rm --entrypoint tail <image> -n1 /home/runner/k8s-novolume/index.js
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -27,23 +27,34 @@ HOOKS_REPO="${HOOKS_REPO:-${RUNNER_ROOT}/../runner-container-hooks}"
 HOOKS_BUILDER_IMAGE="${HOOKS_BUILDER_IMAGE:-node:20-bookworm}"
 HOOKS_OUT_DIR="${ARTIFACTS_DIR}/hooks/k8s-novolume"
 HOOKS_OUT="${HOOKS_OUT_DIR}/index.js"
-HOOKS_STAMP="${HOOKS_OUT}.source"
+# Where the build container drops its raw bundle (owned by root).
+HOOKS_BUILD_OUT="${HOOKS_OUT}.build"
+SOURCE_MARKER='// k8s-novolume hook source: '
 
 mkdir -p "${HOOKS_OUT_DIR}"
 
-# Record what the bundle was built from: next to it for the cache check, and
-# inside it so the source can be read back from a built image.
-stamp_bundle() {
-  printf '%s\n' "$1" > "${HOOKS_STAMP}"
-  printf '\n// k8s-novolume hook source: %s\n' "$1" >> "${HOOKS_OUT}"
+# Install a bundle as ${HOOKS_OUT} with its source appended as the last line.
+# Written to a temp file and moved into place, so ${HOOKS_OUT} only ever exists
+# complete — a bundle without the line is never reused — and is owned by the
+# invoking user even though the build container writes as root.
+install_bundle() {
+  { cat "$1"; printf '\n%s%s\n' "${SOURCE_MARKER}" "$2"; } > "${HOOKS_OUT}.tmp"
+  mv -f "${HOOKS_OUT}.tmp" "${HOOKS_OUT}"
+}
+
+# Drop every earlier output (rm only needs the directory to be writable, so
+# this also clears root-owned files from a previous container build). The
+# .source file is the stamp format of an earlier version of this script.
+clean_outputs() {
+  rm -f "${HOOKS_OUT}" "${HOOKS_OUT}.tmp" "${HOOKS_BUILD_OUT}" "${HOOKS_OUT}.source"
 }
 
 if [ -n "${HOOKS_INDEX_JS:-}" ]; then
   [ -f "${HOOKS_INDEX_JS}" ] || die "HOOKS_INDEX_JS not found at ${HOOKS_INDEX_JS}"
   warn "hooks: using prebuilt bundle ${HOOKS_INDEX_JS} — its source is not verified"
-  cp "${HOOKS_INDEX_JS}" "${HOOKS_OUT}"
+  clean_outputs
   # Never matches a commit, so the next source build replaces it.
-  stamp_bundle "prebuilt ${HOOKS_INDEX_JS}"
+  install_bundle "${HOOKS_INDEX_JS}" "prebuilt ${HOOKS_INDEX_JS}"
   log "hooks: -> ${HOOKS_OUT}"
   exit 0
 fi
@@ -57,7 +68,7 @@ HOOKS_SOURCE="${HOOKS_SHA}"
 if [ "${HOOKS_SHA}" != unknown ] && [ -n "$(git -C "${HOOKS_REPO}" status --porcelain)" ]; then
   HOOKS_SOURCE="${HOOKS_SHA}-dirty"
 fi
-BUILT_SOURCE="$(cat "${HOOKS_STAMP}" 2>/dev/null || true)"
+BUILT_SOURCE="$(tail -n1 "${HOOKS_OUT}" 2>/dev/null | sed -n "s#^${SOURCE_MARKER}##p" || true)"
 
 if [ "${FORCE_HOOKS_BUILD:-0}" = "1" ]; then
   reason="FORCE_HOOKS_BUILD=1"
@@ -74,7 +85,7 @@ fi
 
 # Drop the old bundle first, so a failed build can never leave it in place for
 # the image step to pick up.
-rm -f "${HOOKS_OUT}" "${HOOKS_STAMP}"
+clean_outputs
 
 require_docker
 log "hooks: building custom k8s hook from ${HOOKS_REPO} at ${HOOKS_SOURCE} (${reason})"
@@ -94,9 +105,10 @@ docker run --rm \
     npm run build --prefix packages/hooklib
     npm ci --prefix packages/k8s
     npm run build --prefix packages/k8s
-    cp packages/k8s/dist/index.js /hooks-out/index.js
+    cp packages/k8s/dist/index.js /hooks-out/index.js.build
   '
 
-[ -f "${HOOKS_OUT}" ] || die "hooks: bundle was not produced"
-stamp_bundle "${HOOKS_SOURCE}"
+[ -f "${HOOKS_BUILD_OUT}" ] || die "hooks: bundle was not produced"
+install_bundle "${HOOKS_BUILD_OUT}" "${HOOKS_SOURCE}"
+rm -f "${HOOKS_BUILD_OUT}"
 log "hooks: -> ${HOOKS_OUT} ($(wc -c < "${HOOKS_OUT}") bytes, source ${HOOKS_SOURCE})"

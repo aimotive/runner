@@ -74,10 +74,11 @@ HOOKS_INDEX_JS=../runner-container-hooks/packages/k8s/dist/index.js \
 ```
 
 The hooks step reuses `build/.artifacts/hooks/k8s-novolume/index.js` only if it
-was built from the exact, clean commit the hooks fork is on now (recorded in
-`index.js.source`); a new commit, uncommitted changes or a prebuilt bundle
-trigger a rebuild, and `FORCE_HOOKS_BUILD=1` always rebuilds. The source is
-also appended to the bundle, so an image can be checked with:
+was built from the exact, clean commit the hooks fork is on now (recorded as
+the bundle's last line, `// k8s-novolume hook source: <commit>`); a new commit,
+uncommitted changes or a prebuilt bundle trigger a rebuild, and
+`FORCE_HOOKS_BUILD=1` always rebuilds. The same line lets an image be checked
+with:
 
 ```bash
 docker run --rm --entrypoint tail <image> -n1 /home/runner/k8s-novolume/index.js
