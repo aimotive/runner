@@ -35,6 +35,7 @@ build_image() {
   [ -f "${RUNNER_PACKAGE}" ] || die "runner package missing (${RUNNER_PACKAGE}) — run the 'package' step first"
   if [ "${dockerfile}" = "Dockerfile.custom" ]; then
     [ -f "${ARTIFACTS_DIR}/hooks/k8s-novolume/index.js" ] || die "custom k8s hook missing — run the 'hooks' step first"
+    [ -f "${ARTIFACTS_DIR}/hooks/k8s-novolume/job-started.sh" ] || die "job-started hook missing — run the 'hooks' step first"
   fi
   log "Building image ${tag} from ${dockerfile}"
   docker build \

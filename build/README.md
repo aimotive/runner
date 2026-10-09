@@ -24,7 +24,7 @@ binaries come from the [`node20-ubuntu1804`](../../node20-ubuntu1804) repo.
 | Step | Script | Output |
 | --- | --- | --- |
 | 1. node | `build/build-node-binaries.sh` | `build/.artifacts/node/node20.tar.gz`, `node24.tar.gz` |
-| 2. hooks | `build/build-hooks.sh` | `build/.artifacts/hooks/k8s-novolume/index.js` (custom fork) |
+| 2. hooks | `build/build-hooks.sh` | `build/.artifacts/hooks/k8s-novolume/index.js` (custom fork) and its `job-started.sh` |
 | 3. package | `build/build-runner-package.sh` | `build/.artifacts/actions-runner.tar.gz` (node baked into externals) |
 | 4. images | `images/Dockerfile.custom`, `images/Dockerfile.local` | two runner images |
 
@@ -35,6 +35,14 @@ custom Kubernetes-mode features (work-volume PV reuse, node pinning, job
 resource/usage reporting, reliable output copy-back). Point the runner at it
 with `ACTIONS_RUNNER_CONTAINER_HOOKS=/home/runner/k8s-novolume/index.js`. The
 stock upstream volume-based hook is still available at `/home/runner/k8s`.
+
+The image also sets the runner's job-started hook,
+`ACTIONS_RUNNER_HOOK_JOB_STARTED=/home/runner/k8s-novolume/job-started.sh`
+(from the same fork): every job's "Set up runner" step prints
+`Runner pod <pod> is running on node <node>`, read with the pod's own service
+account. A runner pod is not told its node, and a job without a container runs
+its steps there; "Initialize containers" prints the job pod's node as well. A
+pod spec that sets the variable itself overrides it.
 
 The Node versions are read automatically from `src/Misc/externals.sh`
 (`NODE20_VERSION` / `NODE24_VERSION`) so they always match what this runner
