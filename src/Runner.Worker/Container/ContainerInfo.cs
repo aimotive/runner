@@ -47,11 +47,15 @@ namespace GitHub.Runner.Worker.Container
 
 #if OS_WINDOWS
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Work), "C:\\__w"));
+            _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Temp), "C:\\__w\\_temp"));
+            _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Actions), "C:\\__w\\_actions"));
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Tools), "C:\\__t")); // Tool cache folder may come from ENV, so we need a unique folder to avoid collision
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Externals), "C:\\__e"));
             // add -v '\\.\pipe\docker_engine:\\.\pipe\docker_engine' when they are available (17.09)
 #else
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Work), "/__w"));
+            _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Temp), "/__w/_temp"));
+            _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Actions), "/__w/_actions"));
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Tools), "/__t")); // Tool cache folder may come from ENV, so we need a unique folder to avoid collision
             _pathMappings.Add(new PathMapping(hostContext.GetDirectory(WellKnownDirectory.Externals), "/__e"));
             if (this.IsJobContainer)

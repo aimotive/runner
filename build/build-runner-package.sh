@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Step 2 — build the custom runner from src/ and bake the custom Node binaries
+# into its externals (node20 + node24), then package it.
+#
+# The runner mounts externals/ into the job container, so replacing the bundled
+# node with the glibc-2.27 build is what makes JS actions run inside an
+# ubuntu:18.04 job container without the "GLIBC_2.28 not found" error.
+#
+# Output: ${RUNNER_PACKAGE}  (a full actions-runner layout tarball)
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+
+require_docker
+
+BUILD_CONFIG="${BUILD_CONFIG:-Release}"
+BUILDER_IMAGE="${BUILDER_IMAGE:-mcr.microsoft.com/dotnet/sdk:8.0}"
+
+[ -f "${NODE_DIST_DIR}/node20.tar.gz" ] || die "missing ${NODE_DIST_DIR}/node20.tar.gz — run build-node-binaries.sh first"
+[ -f "${NODE_DIST_DIR}/node24.tar.gz" ] || die "missing ${NODE_DIST_DIR}/node24.tar.gz — run build-node-binaries.sh first"
+
+mkdir -p "${ARTIFACTS_DIR}"
+rm -f "${RUNNER_PACKAGE}"
+
+# src/dir.proj shells out to `git rev-parse HEAD` (and `git update-index`) to
+# stamp BuildConstants.cs during the build. When RUNNER_ROOT is a submodule,
+# its .git is just a gitlink file (`gitdir: ../.git/modules/runner`) — a path
+# relative to RUNNER_ROOT's own location in the superrepo, which only resolves
+# there. Once copied into the container it dangles, so `git rev-parse` fails
+# with "not a git repository". Resolve the real git dir on the host and mount
+# it too, so we can splice in a working .git after the copy.
+GIT_DIR="$(git -C "${RUNNER_ROOT}" rev-parse --absolute-git-dir)"
+
+log "Building custom runner package (${BUILD_CONFIG}/${RUNTIME_ID}) with custom node baked in"
+docker run --rm \
+  --platform "${DOCKER_PLATFORM}" \
+  -u "$(id -u):$(id -g)" \
+  -e BUILD_CONFIG="${BUILD_CONFIG}" \
+  -e RUNTIME_ID="${RUNTIME_ID}" \
+  -e HOME=/tmp/runner-home \
+  -e DOTNET_CLI_HOME=/tmp/runner-home \
+  -e NUGET_PACKAGES=/tmp/runner-home/.nuget \
+  -v "${RUNNER_ROOT}:/runner-src:ro" \
+  -v "${GIT_DIR}:/runner-src-git:ro" \
+  -v "${NODE_DIST_DIR}:/node-dist:ro" \
+  -v "${ARTIFACTS_DIR}:/runner-out" \
+  "${BUILDER_IMAGE}" \
+  bash -lc '
+    set -euo pipefail
+    mkdir -p /tmp/runner-home
+    cp -a /runner-src/. /tmp/runner-src
+    rm -rf /tmp/runner-src/_dotnetsdk /tmp/runner-src/_layout /tmp/runner-src/_package /tmp/runner-src/_downloads
+
+    # Replace the dangling gitlink with a real, self-contained .git copied
+    # from the host, and repoint core.worktree (also relative, e.g.
+    # "../../../runner") at the copy'"'"'s actual location so `git
+    # update-index` recognises it as being inside the work tree. Rewritten
+    # with `config --file` (not `--git-dir ... config`), since the latter
+    # still goes through repo setup first and tries to chdir into the OLD
+    # (now-dangling) relative worktree path before applying the new one.
+    rm -f /tmp/runner-src/.git
+    cp -a /runner-src-git /tmp/runner-src/.git
+    git config --file /tmp/runner-src/.git/config core.worktree /tmp/runner-src
+
+    cd /tmp/runner-src/src
+
+    ./dev.sh layout "${BUILD_CONFIG}" "${RUNTIME_ID}"
+
+    echo "==> Replacing bundled node20/node24 with custom glibc-2.27 builds"
+    for v in node20 node24; do
+      target="/tmp/runner-src/_layout/externals/${v}"
+      rm -rf "${target}"
+      mkdir -p "${target}"
+      tar -xzf "/node-dist/${v}.tar.gz" --strip-components=1 -C "${target}"
+      chmod +x "${target}/bin/node"
+    done
+
+    echo "==> Verifying injected node binaries"
+    /tmp/runner-src/_layout/externals/node20/bin/node --version
+    /tmp/runner-src/_layout/externals/node24/bin/node --version
+
+    ./dev.sh package "${BUILD_CONFIG}" "${RUNTIME_ID}"
+
+    PACKAGE_FILE="$(find /tmp/runner-src/_package -maxdepth 1 -type f -name "actions-runner-${RUNTIME_ID}-*.tar.gz" | sort | tail -n 1)"
+    [ -n "${PACKAGE_FILE}" ] || { echo "runner package not produced" >&2; exit 1; }
+    cp "${PACKAGE_FILE}" /runner-out/actions-runner.tar.gz
+  '
+
+[ -f "${RUNNER_PACKAGE}" ] || die "runner package export failed"
+log "Custom runner package ready: ${RUNNER_PACKAGE}"
+ls -la "${RUNNER_PACKAGE}"

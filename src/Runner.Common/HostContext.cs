@@ -395,15 +395,19 @@ namespace GitHub.Runner.Common
                     break;
 
                 case WellKnownDirectory.Temp:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Work),
-                        Constants.Path.TempDirectory);
+                    path = GetDirectoryWithOverride(
+                        Constants.Variables.Agent.TempDirectory,
+                        () => Path.Combine(
+                            GetDirectory(WellKnownDirectory.Work),
+                            Constants.Path.TempDirectory));
                     break;
 
                 case WellKnownDirectory.Actions:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Work),
-                        Constants.Path.ActionsDirectory);
+                    path = GetDirectoryWithOverride(
+                        Constants.Variables.Agent.ActionsDirectory,
+                        () => Path.Combine(
+                            GetDirectory(WellKnownDirectory.Work),
+                            Constants.Path.ActionsDirectory));
                     break;
 
                 case WellKnownDirectory.Tools:
@@ -440,6 +444,25 @@ namespace GitHub.Runner.Common
 
             _trace.Info($"Well known directory '{directory}': '{path}'");
             return path;
+        }
+
+        private string GetDirectoryWithOverride(string overrideEnvironmentVariable, Func<string> defaultPathFactory)
+        {
+            ArgUtil.NotNullOrEmpty(overrideEnvironmentVariable, nameof(overrideEnvironmentVariable));
+            ArgUtil.NotNull(defaultPathFactory, nameof(defaultPathFactory));
+
+            var overridePath = Environment.GetEnvironmentVariable(overrideEnvironmentVariable);
+            if (string.IsNullOrEmpty(overridePath))
+            {
+                return defaultPathFactory();
+            }
+
+            if (!Path.IsPathRooted(overridePath))
+            {
+                overridePath = Path.Combine(GetDirectory(WellKnownDirectory.Root), overridePath);
+            }
+
+            return Path.GetFullPath(overridePath);
         }
 
         public string GetConfigFile(WellKnownConfigFile configFile)
