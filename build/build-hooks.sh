@@ -7,6 +7,12 @@
 # resources/usage reporting, reliable output copy-back, ...).
 #
 # Output: ${ARTIFACTS_DIR}/hooks/k8s-novolume/index.js
+#         ${ARTIFACTS_DIR}/hooks/k8s-novolume/job-started.sh — the runner's
+#         job-started hook beside it (packages/k8s/job-started.sh of the fork):
+#         every job's "Set up runner" step says which node its runner pod runs on
+#
+# HOOKS_JOB_STARTED_SH points at another job-started.sh (with HOOKS_INDEX_JS
+# and no fork checkout, say).
 #
 # Sources, in priority order:
 #   1. HOOKS_INDEX_JS env var pointing at a prebuilt bundle.
@@ -42,6 +48,15 @@ install_bundle() {
   mv -f "${HOOKS_OUT}.tmp" "${HOOKS_OUT}"
 }
 
+# The job-started hook, from the fork the bundle comes from; refreshed on every
+# run — it is one small file, and a reused bundle's commit is its commit too.
+install_job_started() {
+  local source="${HOOKS_JOB_STARTED_SH:-${HOOKS_REPO}/packages/k8s/job-started.sh}"
+  [ -f "${source}" ] || die "job-started hook not found at ${source} (set HOOKS_JOB_STARTED_SH, or update the hooks fork)"
+  install -m 0755 "${source}" "${HOOKS_OUT_DIR}/job-started.sh"
+  log "hooks: -> ${HOOKS_OUT_DIR}/job-started.sh"
+}
+
 # Drop every earlier output (rm only needs the directory to be writable, so
 # this also clears root-owned files from a previous container build). The
 # .source file is the stamp format of an earlier version of this script.
@@ -56,6 +71,7 @@ if [ -n "${HOOKS_INDEX_JS:-}" ]; then
   # Never matches a commit, so the next source build replaces it.
   install_bundle "${HOOKS_INDEX_JS}" "prebuilt ${HOOKS_INDEX_JS}"
   log "hooks: -> ${HOOKS_OUT}"
+  install_job_started
   exit 0
 fi
 
@@ -80,6 +96,7 @@ elif [ "${BUILT_SOURCE}" != "${HOOKS_SOURCE}" ]; then
   reason="previous bundle was built from ${BUILT_SOURCE:-an unknown source}"
 else
   log "hooks: bundle already built from ${HOOKS_SOURCE} — reusing ${HOOKS_OUT}"
+  install_job_started
   exit 0
 fi
 
@@ -112,3 +129,4 @@ docker run --rm \
 install_bundle "${HOOKS_BUILD_OUT}" "${HOOKS_SOURCE}"
 rm -f "${HOOKS_BUILD_OUT}"
 log "hooks: -> ${HOOKS_OUT} ($(wc -c < "${HOOKS_OUT}") bytes, source ${HOOKS_SOURCE})"
+install_job_started

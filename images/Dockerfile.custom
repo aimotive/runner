@@ -7,8 +7,9 @@
 # reuse, node pinning, job resource reporting, ...) instead of the upstream
 # release — required for our Kubernetes self-hosted runner mode.
 #
-# Build context must contain actions-runner.tar.gz and hooks/k8s-novolume/index.js
-# (see build/build-runner-package.sh and build/build-hooks.sh):
+# Build context must contain actions-runner.tar.gz, hooks/k8s-novolume/index.js and
+# hooks/k8s-novolume/job-started.sh (see build/build-runner-package.sh and
+# build/build-hooks.sh):
 #   docker build -f images/Dockerfile.custom -t <tag> build/.artifacts
 FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-noble AS build
 
@@ -34,6 +35,10 @@ RUN curl -f -L -o runner-container-hooks.zip https://github.com/actions/runner-c
 # Custom k8s-novolume hook from our runner-container-hooks fork (built by
 # build/build-hooks.sh). ncc bundles the whole hook into a single index.js.
 COPY hooks/k8s-novolume/index.js ./k8s-novolume/index.js
+# Its job-started hook: every job's "Set up runner" step says which node the
+# runner pod runs on — a job without a container runs its steps there.
+COPY hooks/k8s-novolume/job-started.sh ./k8s-novolume/job-started.sh
+RUN chmod 0755 ./k8s-novolume/job-started.sh
 
 RUN export RUNNER_ARCH=${TARGETARCH} \
     && if [ "$RUNNER_ARCH" = "amd64" ]; then export DOCKER_ARCH=x86_64 ; fi \
@@ -52,6 +57,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV RUNNER_MANUALLY_TRAP_SIG=1
 ENV ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1
 ENV ImageOS=ubuntu24
+# Run for every job, with a container or without: prints
+# "Runner pod <pod> is running on node <node>" (k8s-novolume/job-started.sh).
+# A pod spec that sets the variable itself wins.
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/home/runner/k8s-novolume/job-started.sh
 
 RUN apt update -y \
     && apt install -y --no-install-recommends sudo lsb-release gpg-agent software-properties-common curl jq unzip \
