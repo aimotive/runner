@@ -299,6 +299,32 @@ namespace GitHub.Runner.Common.Tests
             }
         }
 
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Common")]
+        public void GetDirectoryUsesTempAndActionsOverrides()
+        {
+            var tempOverride = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("D"), "runner-temp");
+            var actionsOverride = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("D"), "runner-actions");
+
+            try
+            {
+                Environment.SetEnvironmentVariable(Constants.Variables.Agent.TempDirectory, tempOverride);
+                Environment.SetEnvironmentVariable(Constants.Variables.Agent.ActionsDirectory, actionsOverride);
+
+                Setup();
+
+                Assert.Equal(Path.GetFullPath(tempOverride), _hc.GetDirectory(WellKnownDirectory.Temp));
+                Assert.Equal(Path.GetFullPath(actionsOverride), _hc.GetDirectory(WellKnownDirectory.Actions));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(Constants.Variables.Agent.TempDirectory, null);
+                Environment.SetEnvironmentVariable(Constants.Variables.Agent.ActionsDirectory, null);
+                Teardown();
+            }
+        }
+
         private void Setup([CallerMemberName] string testName = "")
         {
             _tokenSource = new CancellationTokenSource();
