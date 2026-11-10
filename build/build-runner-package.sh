@@ -30,6 +30,15 @@ rm -f "${RUNNER_PACKAGE}"
 # it too, so we can splice in a working .git after the copy.
 GIT_DIR="$(git -C "${RUNNER_ROOT}" rev-parse --absolute-git-dir)"
 
+# The container runs as the caller's uid, which has no passwd entry in it. The
+# .NET runtime keeps a user's named mutexes under $XDG_RUNTIME_DIR, or else
+# under the home directory the passwd database gives it ($HOME does not count).
+# With neither, the first `dotnet msbuild` dies in its first-run step:
+#   System.IO.IOException: The system cannot open the device or file
+#   specified. : 'NuGet-Migrations'
+# The SDK 8.0.425 that runner 2.338.0 pinned kept them in /tmp/.dotnet and did
+# not need this; the 8.0.427 of 2.338.2 does. So the build gets a runtime
+# directory: it has to exist and be the user's own.
 log "Building custom runner package (${BUILD_CONFIG}/${RUNTIME_ID}) with custom node baked in"
 docker run --rm \
   --platform "${DOCKER_PLATFORM}" \
@@ -39,6 +48,7 @@ docker run --rm \
   -e HOME=/tmp/runner-home \
   -e DOTNET_CLI_HOME=/tmp/runner-home \
   -e NUGET_PACKAGES=/tmp/runner-home/.nuget \
+  -e XDG_RUNTIME_DIR=/tmp/runner-xdg-runtime \
   -v "${RUNNER_ROOT}:/runner-src:ro" \
   -v "${GIT_DIR}:/runner-src-git:ro" \
   -v "${NODE_DIST_DIR}:/node-dist:ro" \
@@ -47,6 +57,7 @@ docker run --rm \
   bash -lc '
     set -euo pipefail
     mkdir -p /tmp/runner-home
+    mkdir -m 700 "${XDG_RUNTIME_DIR}"
     cp -a /runner-src/. /tmp/runner-src
     rm -rf /tmp/runner-src/_dotnetsdk /tmp/runner-src/_layout /tmp/runner-src/_package /tmp/runner-src/_downloads
 
