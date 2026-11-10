@@ -74,6 +74,12 @@ NODE24_TARBALL=~/Downloads/node-v24.16.0-linux-x64.tar.gz \
 ./build-runner-image.sh
 ```
 
+The node step reuses `build/.artifacts/node/node20.tar.gz` and `node24.tar.gz`
+only while they hold the versions `src/Misc/externals.sh` pins (read from the
+tarball's top directory, `node-v24.22.1-linux-x64/`). A runner upgrade that
+moves a pin replaces that tarball, from `NODE2x_TARBALL` when it is given and
+by a source build when not, and `FORCE_NODE_BUILD=1` always replaces both.
+
 Likewise a prebuilt hook bundle can be reused instead of rebuilding the fork:
 
 ```bash

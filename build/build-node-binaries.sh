@@ -9,6 +9,11 @@
 #      (fastest — e.g. downloaded from a node20-ubuntu1804 GitHub Release).
 #   2. Build from source via the node20-ubuntu1804 repo's build-local.sh
 #      (NODE_REPO, default ../node20-ubuntu1804). Slow under emulation.
+#
+# A tarball already in ${NODE_DIST_DIR} is reused only while it holds the Node
+# version the runner pins (src/Misc/externals.sh): a runner upgrade that moves
+# the pin replaces it, so the package never ships the Node of an older runner.
+# FORCE_NODE_BUILD=1 replaces it whatever it holds.
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
@@ -17,18 +22,37 @@ NODE_REPO="${NODE_REPO:-${RUNNER_ROOT}/../node20-ubuntu1804}"
 resolve_node_versions
 mkdir -p "${NODE_DIST_DIR}"
 
+# The Node version a tarball holds, without the v: the name of its top
+# directory says it (`node-v24.22.1-linux-x64/`, as nodejs.org and
+# node20-ubuntu1804 pack it). Empty for a tarball that names none.
+tarball_node_version() {
+  { tar -tzf "$1" 2>/dev/null || true; } |
+    sed -nE '1s#^(\./)?node-v([0-9]+\.[0-9]+\.[0-9]+)-.*#\2#p'
+}
+
 # args: <version-without-v> <gcc> <label> <override-tarball-or-empty>
 produce_node() {
   local version="$1" gcc="$2" label="$3" override="$4"
   local out="${NODE_DIST_DIR}/${label}.tar.gz"
+  local have
 
   if [ -f "${out}" ] && [ "${FORCE_NODE_BUILD:-0}" != "1" ]; then
-    log "${label}: already present (${out}) — skipping (set FORCE_NODE_BUILD=1 to rebuild)"
-    return
+    have="$(tarball_node_version "${out}")"
+    if [ "${have}" = "${version}" ]; then
+      log "${label}: v${version} already present (${out}) — skipping (set FORCE_NODE_BUILD=1 to rebuild)"
+      return
+    fi
+    # Gone before its replacement is made: a build that fails here leaves
+    # nothing for the package step to ship by mistake.
+    log "${label}: ${out} holds ${have:+Node v}${have:-no Node version it names}, the runner pins v${version} — replacing it"
+    rm -f "${out}"
   fi
 
   if [ -n "${override}" ]; then
     [ -f "${override}" ] || die "${label}: tarball not found at ${override}"
+    have="$(tarball_node_version "${override}")"
+    [ "${have}" = "${version}" ] ||
+      warn "${label}: ${override} holds ${have:+Node v}${have:-no Node version it names}, the runner pins v${version}"
     log "${label}: using prebuilt tarball ${override}"
     cp "${override}" "${out}"
     return
